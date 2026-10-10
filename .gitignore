@@ -1,0 +1,35 @@
+# Virtual environments
+.venv/
+.venvp/
+venv/
+env/
+
+# Environment variables & secrets
+.env
+.env.local
+.env.*.local
+
+# Python cache & artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.log
+
+# Dynamic data & user uploads
+backend/data/uploads/*
+backend/data/faiss_index/*
+!backend/data/uploads/.gitkeep
+!backend/data/faiss_index/.gitkeep
+
+# Next.js & Node.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/.vercel/
+*.tsbuildinfo
+next-env.d.ts
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,15 @@
+faiss-cpu
+langchain
+langchain-community 
+langchain-text-splitters 
+pypdf
+fpdf 
+langchain-huggingface 
+langchain-experimental 
+sentence-transformers
+langchain-google-genai
+numpy
+python-dotenv
+fastapi
+uvicorn
+python-multipart
