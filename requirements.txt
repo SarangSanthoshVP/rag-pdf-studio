@@ -1,12 +1,9 @@
 faiss-cpu
 langchain
-langchain-community 
-langchain-text-splitters 
+langchain-community
+langchain-text-splitters
 pypdf
-fpdf 
-langchain-huggingface 
-langchain-experimental 
-sentence-transformers
+fpdf
 langchain-google-genai
 numpy
 python-dotenv

@@ -1,18 +1,25 @@
 # embedding and FAISS vectorstore module
 import os
-from langchain_huggingface import HuggingFaceEmbeddings
+from dotenv import load_dotenv
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import FAISS
+
+load_dotenv()
 
 _embedder = None
 
 
-def get_embedder(model_name: str = "sentence-transformers/all-MiniLM-L6-v2"):
+def get_embedder(model_name: str = "models/gemini-embedding-001", api_key: str = None):
     """
-    Get or initialize the HuggingFace embeddings model (cached).
+    Get or initialize the Google Generative AI embeddings model (cached singleton).
+    Zero local RAM overhead — embeddings are computed via Google's cloud API.
     """
     global _embedder
     if _embedder is None:
-        _embedder = HuggingFaceEmbeddings(model=model_name)
+        key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if not key:
+            raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY not found in environment or .env file.")
+        _embedder = GoogleGenerativeAIEmbeddings(model=model_name, google_api_key=key)
     return _embedder
 
 
