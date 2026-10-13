@@ -1,6 +1,6 @@
 import os
 import shutil
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
@@ -9,7 +9,8 @@ from pydantic import BaseModel
 
 from backend.loading_chunking import load_and_chunk_pdf
 from backend.embedding_faiss import create_vectorstore, load_vectorstore, get_retriever, get_embedder
-from backend.rag_chain import create_rag_chain, ask_question
+from backend.rag_chain import create_rag_chain, generate_answer_from_docs
+from backend.query_router import route_and_retrieve
 
 # Paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -50,8 +51,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="RAG Project API",
-    description="FastAPI backend for PDF Q&A using LangChain, FAISS, and Gemini",
-    version="1.0.0",
+    description="FastAPI backend for PDF Q&A using LangChain, FAISS, Query Routing, and Gemini",
+    version="1.1.0",
     lifespan=lifespan
 )
 
@@ -78,6 +79,9 @@ class QueryResponse(BaseModel):
     query: str
     answer: str
     document_name: Optional[str] = None
+    query_type: Optional[str] = None
+    sub_queries: Optional[List[str]] = []
+    sub_query_evidence: Optional[Dict[str, Any]] = {}
     sources: List[SourceItem] = []
 
 
@@ -151,33 +155,45 @@ async def upload_pdf(file: UploadFile = File(...)):
 @app.post("/ask", response_model=QueryResponse)
 def ask(payload: QueryRequest):
     """
-    Accepts user question, retrieves relevant chunks, and returns LLM answer.
+    Accepts user question:
+    1. Classifies query type (single_fact, multi_part, summarization).
+    2. If multi_part, decomposes into sub-queries and retrieves evidence for each part.
+    3. Merges context and generates grounded response.
     """
     query = payload.query.strip()
     if not query:
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
 
-    if app_state["chain"] is None or app_state["retriever"] is None:
+    if app_state["retriever"] is None:
         raise HTTPException(
             status_code=400,
             detail="No document has been uploaded yet. Please upload a PDF first."
         )
 
     try:
-        # Invoke RAG chain
-        answer = ask_question(app_state["chain"], query)
+        # Route, decompose (if multi_part), and retrieve evidence
+        routed_result = route_and_retrieve(query, app_state["retriever"])
 
-        # Retrieve source documents for citation
-        source_docs = app_state["retriever"].invoke(query)
+        merged_docs = routed_result["merged_docs"]
+        query_type = routed_result["query_type"]
+        sub_queries = routed_result["sub_queries"]
+        evidence = routed_result["evidence_by_sub_query"]
+
+        # Generate answer from merged context
+        answer = generate_answer_from_docs(merged_docs, query)
+
         sources = [
             SourceItem(content=doc.page_content, metadata=doc.metadata)
-            for doc in source_docs
+            for doc in merged_docs
         ]
 
         return QueryResponse(
             query=query,
             answer=answer,
             document_name=app_state["document_name"],
+            query_type=query_type,
+            sub_queries=sub_queries,
+            sub_query_evidence=evidence,
             sources=sources
         )
 
@@ -188,7 +204,3 @@ def ask(payload: QueryRequest):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("backend.main:app", host="127.0.0.1", port=8000, reload=True)
-
-
-#uvicorn backend.main:app --reload --port 8000
-#npm run dev -frontend

@@ -27,7 +27,7 @@ def format_docs(docs):
     return "\n\n".join(doc.page_content for doc in docs)
 
 
-def get_llm(model: str = "gemini-3.8-flash", temperature: float = 0.0, api_key: str = None):
+def get_llm(model: str = "gemini-3.5-flash", temperature: float = 0.0, api_key: str = None):
     """
     Initialize Google Generative AI LLM.
     """
@@ -69,3 +69,18 @@ def ask_question(chain, query: str):
     Invoke the chain with the user query.
     """
     return chain.invoke(query)
+
+
+def generate_answer_from_docs(docs, query: str, llm=None, system_prompt: str = DEFAULT_SYSTEM_PROMPT) -> str:
+    """
+    Generate answer directly from a pre-routed/merged list of retrieved Document objects.
+    Useful when query routing / decomposition retrieves context across multiple sub-queries.
+    """
+    if llm is None:
+        llm = get_llm()
+
+    prompt = ChatPromptTemplate.from_template(system_prompt)
+    context_str = format_docs(docs)
+
+    generator_chain = prompt | llm | StrOutputParser()
+    return generator_chain.invoke({"context": context_str, "query": query})

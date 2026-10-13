@@ -63,9 +63,19 @@ The backend is built around a modular architecture split into distinct, single-r
 
 ### 4. Vector Storage & Retrieval (`backend/embedding_faiss.py`)
 - Vectorizes chunks and builds an in-memory & on-disk `FAISS` index (`faiss-cpu`).
-- Returns a similarity retriever configured with `search_kwargs={"k": 5}` to retrieve the top 5 most relevant context chunks.
+- Returns a similarity retriever configured with `search_kwargs={"k": 5}` to retrieve relevant context chunks.
 
-### 5. LCEL Generation Chain (`backend/rag_chain.py`)
+### 5. Query Routing & Decomposition (`backend/query_router.py`)
+- **Lightweight Classifier:** Automatically classifies incoming questions into:
+  - `single_fact`: Direct factual questions looking for specific points or definitions.
+  - `multi_part`: Questions comparing entities or asking multi-faceted questions (e.g., *"What is X and how does it compare to Y?"*).
+  - `summarization`: Requests for general document synthesis or high-level overviews.
+- **Sub-Query Decomposition & Evidence Tracking:**
+  - Decomposes `multi_part` questions into 2–4 targeted sub-queries.
+  - Retrieves dedicated context chunks for each sub-query separately.
+  - Returns clear evidence showing which documents were retrieved for which part before merging and deduplicating context.
+
+### 6. LCEL Generation Chain (`backend/rag_chain.py`)
 - Built using **LangChain Expression Language (LCEL)**:
   ```python
   chain = (
@@ -79,7 +89,7 @@ The backend is built around a modular architecture split into distinct, single-r
   )
   ```
 - **Prompt:** Enforces strict grounding — answers only from retrieved context, otherwise politely informs the user that information is outside the document.
-- **LLM:** `ChatGoogleGenerativeAI(model="gemini-3.8-flash", temperature=0.0)`.
+- **LLM:** `ChatGoogleGenerativeAI(model="gemini-3.5-flash", temperature=0.0)`.
 
 ---
 
@@ -195,7 +205,8 @@ rag-pdf-studio/
 │   ├── main.py                # FastAPI routes (/upload, /ask, /status) + CORS
 │   ├── loading_chunking.py    # PyPDFLoader + RecursiveCharacterTextSplitter
 │   ├── embedding_faiss.py     # GoogleGenerativeAIEmbeddings + FAISS vectorstore
-│   ├── rag_chain.py           # LCEL chain (Prompt + Gemini 3.8 Flash + Parser)
+│   ├── query_router.py        # Query classification & sub-query decomposition
+│   ├── rag_chain.py           # LCEL chain (Prompt + Gemini 3.5 Flash + Parser)
 │   └── data/
 │       ├── uploads/           # PDF storage directory
 │       └── faiss_index/       # Serialized FAISS index

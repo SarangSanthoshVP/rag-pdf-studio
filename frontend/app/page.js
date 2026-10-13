@@ -160,6 +160,9 @@ export default function RAGDashboard() {
           {
             sender: "assistant",
             text: data.answer,
+            query_type: data.query_type,
+            sub_queries: data.sub_queries || [],
+            sub_query_evidence: data.sub_query_evidence || {},
             sources: data.sources || [],
           },
         ]);
@@ -448,10 +451,64 @@ export default function RAGDashboard() {
                     <div className="message-user">{msg.text}</div>
                   ) : (
                     <div className="message-ai">
-                      <div className="message-ai-header">
-                        <span>🤖</span>
-                        <span>Gemini RAG Response</span>
+                      <div className="message-ai-header" style={{ justifyContent: "space-between", width: "100%" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                          <span>🤖</span>
+                          <span>Gemini RAG Response</span>
+                        </div>
+                        {msg.query_type && (
+                          <span
+                            style={{
+                              fontSize: "11px",
+                              padding: "2px 8px",
+                              borderRadius: "999px",
+                              fontWeight: 600,
+                              background:
+                                msg.query_type === "multi_part"
+                                  ? "rgba(168, 85, 247, 0.2)"
+                                  : msg.query_type === "summarization"
+                                  ? "rgba(6, 182, 212, 0.2)"
+                                  : "rgba(16, 185, 129, 0.2)",
+                              color:
+                                msg.query_type === "multi_part"
+                                  ? "#c084fc"
+                                  : msg.query_type === "summarization"
+                                  ? "#22d3ee"
+                                  : "#34d399",
+                              border: "1px solid rgba(255, 255, 255, 0.1)",
+                            }}
+                          >
+                            {msg.query_type === "multi_part"
+                              ? "🔀 Multi-part Routed"
+                              : msg.query_type === "summarization"
+                              ? "📋 Summarization"
+                              : "🎯 Single-fact"}
+                          </span>
+                        )}
                       </div>
+
+                      {/* Decomposed Sub-Queries (if multi_part) */}
+                      {msg.sub_queries && msg.sub_queries.length > 1 && (
+                        <div
+                          style={{
+                            background: "rgba(99, 102, 241, 0.08)",
+                            border: "1px dashed rgba(99, 102, 241, 0.3)",
+                            borderRadius: "8px",
+                            padding: "8px 12px",
+                            fontSize: "12px",
+                          }}
+                        >
+                          <p style={{ fontWeight: 600, color: "#a5b4fc", marginBottom: "4px" }}>
+                            🔍 Decomposed Sub-Queries:
+                          </p>
+                          <ul style={{ paddingLeft: "18px", color: "#cbd5e1", margin: 0 }}>
+                            {msg.sub_queries.map((sq, sqIdx) => (
+                              <li key={sqIdx}>{sq}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
                       <div className="message-ai-content">{msg.text}</div>
 
                       {/* Source Citations */}
