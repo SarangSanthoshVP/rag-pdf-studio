@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from backend.loading_chunking import load_and_chunk_pdf
 from backend.embedding_faiss import create_vectorstore, load_vectorstore, get_retriever, get_embedder
+from backend.reranker import get_cross_encoder_retriever
 from backend.rag_chain import create_rag_chain, generate_answer_from_docs
 from backend.query_router import route_and_retrieve
 
@@ -24,6 +25,7 @@ os.makedirs(FAISS_DIR, exist_ok=True)
 # In-memory pipeline state
 app_state = {
     "vectorstore": None,
+    "base_retriever": None,
     "retriever": None,
     "chain": None,
     "document_name": None
@@ -37,22 +39,25 @@ async def lifespan(app: FastAPI):
         get_embedder()
         if os.path.exists(os.path.join(FAISS_DIR, "index.faiss")):
             vectorstore = load_vectorstore(FAISS_DIR)
-            retriever = get_retriever(vectorstore)
-            chain = create_rag_chain(retriever)
+            base_retriever = get_retriever(vectorstore, k=5)
+            reranked_retriever = get_cross_encoder_retriever(base_retriever, top_n=3)
+            chain = create_rag_chain(reranked_retriever)
             app_state["vectorstore"] = vectorstore
-            app_state["retriever"] = retriever
+            app_state["base_retriever"] = base_retriever
+            app_state["retriever"] = reranked_retriever
             app_state["chain"] = chain
             app_state["document_name"] = "Restored previous index"
-            print("Successfully loaded existing FAISS index from disk.")
+            print("Successfully loaded existing FAISS index and initialized CrossEncoder reranker from disk.")
     except Exception as e:
         print(f"Index warm-up notice: {e}")
     yield
 
 
+
 app = FastAPI(
     title="RAG Project API",
-    description="FastAPI backend for PDF Q&A using LangChain, FAISS, Query Routing, and Gemini",
-    version="1.1.0",
+    description="FastAPI backend for PDF Q&A using LangChain, FAISS, CrossEncoder Reranker, and Gemini",
+    version="1.2.0",
     lifespan=lifespan
 )
 
@@ -108,7 +113,8 @@ async def upload_pdf(file: UploadFile = File(...)):
     1. Saves uploaded PDF
     2. Loads & Chunks it using loading_chunking module
     3. Creates FAISS vectorstore using embedding_faiss module
-    4. Builds LCEL RAG chain using rag_chain module
+    4. Wraps retriever with CrossEncoderReranker using reranker module
+    5. Builds LCEL RAG chain using rag_chain module
     """
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
@@ -128,21 +134,23 @@ async def upload_pdf(file: UploadFile = File(...)):
         # 2. Embed & store into FAISS
         vectorstore = create_vectorstore(chunks, save_dir=FAISS_DIR)
 
-        # 3. Create retriever
-        retriever = get_retriever(vectorstore)
+        # 3. Create base retriever and wrap with CrossEncoder reranker
+        base_retriever = get_retriever(vectorstore, k=5)
+        reranked_retriever = get_cross_encoder_retriever(base_retriever, top_n=3)
 
-        # 4. Create RAG chain
-        chain = create_rag_chain(retriever)
+        # 4. Create RAG chain using reranked retriever
+        chain = create_rag_chain(reranked_retriever)
 
         # Update in-memory state
         app_state["vectorstore"] = vectorstore
-        app_state["retriever"] = retriever
+        app_state["base_retriever"] = base_retriever
+        app_state["retriever"] = reranked_retriever
         app_state["chain"] = chain
         app_state["document_name"] = file.filename
 
         return {
             "status": "success",
-            "message": f"Successfully processed '{file.filename}'",
+            "message": f"Successfully processed '{file.filename}' with CrossEncoder reranking enabled",
             "filename": file.filename,
             "total_pages": len(pages),
             "total_chunks": len(chunks)
@@ -158,7 +166,7 @@ def ask(payload: QueryRequest):
     Accepts user question:
     1. Classifies query type (single_fact, multi_part, summarization).
     2. If multi_part, decomposes into sub-queries and retrieves evidence for each part.
-    3. Merges context and generates grounded response.
+    3. Merges context, applies CrossEncoder reranking, and generates grounded response.
     """
     query = payload.query.strip()
     if not query:
@@ -171,15 +179,15 @@ def ask(payload: QueryRequest):
         )
 
     try:
-        # Route, decompose (if multi_part), and retrieve evidence
-        routed_result = route_and_retrieve(query, app_state["retriever"])
+        # Route, decompose (if multi_part), retrieve, and rerank
+        routed_result = route_and_retrieve(query, app_state["retriever"], use_reranker=True, top_n=3)
 
         merged_docs = routed_result["merged_docs"]
         query_type = routed_result["query_type"]
         sub_queries = routed_result["sub_queries"]
         evidence = routed_result["evidence_by_sub_query"]
 
-        # Generate answer from merged context
+        # Generate answer from merged/reranked context
         answer = generate_answer_from_docs(merged_docs, query)
 
         sources = [

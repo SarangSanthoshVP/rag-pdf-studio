@@ -15,7 +15,7 @@ def load_pdf(file_path: str):
     return pages
 
 
-def split_documents(pages, chunk_size: int = 600, chunk_overlap: int = 200):
+def split_documents(pages, chunk_size: int = 1000, chunk_overlap: int = 150):
     """
     Split loaded document pages into chunks.
     """
@@ -28,7 +28,7 @@ def split_documents(pages, chunk_size: int = 600, chunk_overlap: int = 200):
     return chunks
 
 
-def load_and_chunk_pdf(file_path: str, chunk_size: int = 600, chunk_overlap: int = 200):
+def load_and_chunk_pdf(file_path: str, chunk_size: int = 1000, chunk_overlap: int = 150):
     """
     Loads PDF and splits it into chunks.
     Returns (chunks, pages).

@@ -89,7 +89,7 @@ The backend is built around a modular architecture split into distinct, single-r
   )
   ```
 - **Prompt:** Enforces strict grounding — answers only from retrieved context, otherwise politely informs the user that information is outside the document.
-- **LLM:** `ChatGoogleGenerativeAI(model="gemini-3.5-flash", temperature=0.0)`.
+- **LLM:** `ChatGoogleGenerativeAI(model="gemini-3.5-flash-lite", temperature=0.0)`.
 
 ---
 

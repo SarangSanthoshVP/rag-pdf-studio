@@ -27,7 +27,7 @@ class QueryPlan(BaseModel):
     )
 
 
-def get_router_llm(model: str = "gemini-3.5-flash", temperature: float = 0.0, api_key: str = None):
+def get_router_llm(model: str = "gemini-3.5-flash-lite", temperature: float = 0.0, api_key: str = None):
     """
     Initialize lightweight LLM for routing and query decomposition.
     """
@@ -122,12 +122,13 @@ def retrieve_for_sub_queries(sub_queries: List[str], retriever) -> Tuple[List[Do
     return merged_docs, sub_query_evidence
 
 
-def route_and_retrieve(query: str, retriever, llm=None) -> Dict[str, Any]:
+def route_and_retrieve(query: str, retriever, llm=None, use_reranker: bool = True, top_n: int = 3) -> Dict[str, Any]:
     """
     High-level entrypoint:
     1. Classifies & decomposes the query.
     2. Retrieves context based on the classification.
-    3. Merges and deduplicates context while tracking evidence for each sub-part.
+    3. Merges context while tracking evidence for each sub-part.
+    4. Optionally reranks merged documents using CrossEncoder.
     """
     plan = classify_and_decompose_query(query, llm=llm)
     query_type = plan["query_type"]
@@ -135,6 +136,10 @@ def route_and_retrieve(query: str, retriever, llm=None) -> Dict[str, Any]:
 
     if query_type == "multi_part" and len(sub_queries) > 1:
         merged_docs, evidence = retrieve_for_sub_queries(sub_queries, retriever)
+        # Rerank merged documents across sub-queries against the overall query
+        if use_reranker and merged_docs:
+            from backend.reranker import rerank_documents
+            merged_docs = rerank_documents(merged_docs, query, top_n=top_n)
     else:
         # single_fact or summarization
         docs = retriever.invoke(query)

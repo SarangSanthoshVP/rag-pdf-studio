@@ -115,7 +115,8 @@ body {
 .brand-text h1 {
   font-size: 20px;
   font-weight: 700;
-  letter-spacing: -0.5px;
+  letter-spacing: 0.5px;
+  word-spacing: 3px;
   background: linear-gradient(to right, #ffffff, #cbd5e1);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -195,7 +196,7 @@ body {
 .sidebar-panel {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 28px;
 }
 
 .card {
@@ -216,15 +217,18 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 18px;
+  margin-bottom: 22px;
 }
 
 .card-title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
+  letter-spacing: 1.2px;
+  word-spacing: 6px;
+  white-space: pre-wrap;
   color: var(--text-primary);
 }
 

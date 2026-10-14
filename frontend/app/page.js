@@ -212,10 +212,10 @@ export default function RAGDashboard() {
       {/* Top Header */}
       <header className="app-header">
         <div className="brand-section">
-          <div className="brand-icon">⚡</div>
+          <div className="brand-icon">⌛️</div>
           <div className="brand-text">
-            <h1>RAG Studio Dashboard</h1>
-            <p>PDF Knowledge Retrieval • FAISS Vector Store • Gemini 3.8 Flash</p>
+            <h1>RAG STUDIO DASHBOARD</h1>
+            <p>PDF Knowledge Retrieval </p>
           </div>
         </div>
 
@@ -225,7 +225,7 @@ export default function RAGDashboard() {
             className={`status-pill ${backendOnline ? "online" : "offline"}`}
           >
             <span className="status-dot"></span>
-            <span>{backendOnline ? "Backend Live :8000" : "Backend Offline"}</span>
+            <span>{backendOnline ? "Backend Live" : "Backend Offline"}</span>
           </div>
           <button
             id="refresh-status-btn"
@@ -253,7 +253,7 @@ export default function RAGDashboard() {
           <section className="card">
             <div className="card-title-group">
               <h2 className="card-title">
-                <span>📄</span> Upload & Index PDF
+                <span>📄</span> UPLOAD & INDEX PDF
               </h2>
             </div>
 
@@ -319,7 +319,7 @@ export default function RAGDashboard() {
                 </>
               ) : (
                 <>
-                  <span>🚀</span>
+                  <span></span>
                   <span>Process & Index PDF</span>
                 </>
               )}
@@ -340,7 +340,7 @@ export default function RAGDashboard() {
           <section className="card">
             <div className="card-title-group">
               <h2 className="card-title">
-                <span>🧠</span> Active Knowledge Base
+                <span>📖</span> ACTIVE KNOWLEDGE BASE
               </h2>
             </div>
 
@@ -453,8 +453,8 @@ export default function RAGDashboard() {
                     <div className="message-ai">
                       <div className="message-ai-header" style={{ justifyContent: "space-between", width: "100%" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                          <span>🤖</span>
-                          <span>Gemini RAG Response</span>
+                          <span></span>
+                          <span>Response</span>
                         </div>
                         {msg.query_type && (
                           <span
@@ -467,22 +467,22 @@ export default function RAGDashboard() {
                                 msg.query_type === "multi_part"
                                   ? "rgba(168, 85, 247, 0.2)"
                                   : msg.query_type === "summarization"
-                                  ? "rgba(6, 182, 212, 0.2)"
-                                  : "rgba(16, 185, 129, 0.2)",
+                                    ? "rgba(6, 182, 212, 0.2)"
+                                    : "rgba(16, 185, 129, 0.2)",
                               color:
                                 msg.query_type === "multi_part"
                                   ? "#c084fc"
                                   : msg.query_type === "summarization"
-                                  ? "#22d3ee"
-                                  : "#34d399",
+                                    ? "#22d3ee"
+                                    : "#34d399",
                               border: "1px solid rgba(255, 255, 255, 0.1)",
                             }}
                           >
                             {msg.query_type === "multi_part"
-                              ? "🔀 Multi-part Routed"
+                              ? " Multi-part Routed"
                               : msg.query_type === "summarization"
-                              ? "📋 Summarization"
-                              : "🎯 Single-fact"}
+                                ? "Summarization"
+                                : " Single-fact"}
                           </span>
                         )}
                       </div>

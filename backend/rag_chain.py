@@ -27,7 +27,7 @@ def format_docs(docs):
     return "\n\n".join(doc.page_content for doc in docs)
 
 
-def get_llm(model: str = "gemini-3.5-flash", temperature: float = 0.0, api_key: str = None):
+def get_llm(model: str = "gemini-3.5-flash-lite", temperature: float = 0.0, api_key: str = None):
     """
     Initialize Google Generative AI LLM.
     """
@@ -42,11 +42,15 @@ def get_llm(model: str = "gemini-3.5-flash", temperature: float = 0.0, api_key: 
     )
 
 
-def create_rag_chain(retriever, llm=None, system_prompt: str = DEFAULT_SYSTEM_PROMPT):
+def create_rag_chain(retriever, llm=None, system_prompt: str = DEFAULT_SYSTEM_PROMPT, use_reranker: bool = False, top_n: int = 3):
     """
     Build the LCEL RAG chain:
-    retriever -> format_docs -> prompt -> llm -> StrOutputParser
+    retriever -> (optional cross-encoder reranker) -> format_docs -> prompt -> llm -> StrOutputParser
     """
+    if use_reranker:
+        from backend.reranker import get_cross_encoder_retriever
+        retriever = get_cross_encoder_retriever(retriever, top_n=top_n)
+
     if llm is None:
         llm = get_llm()
 
@@ -71,11 +75,15 @@ def ask_question(chain, query: str):
     return chain.invoke(query)
 
 
-def generate_answer_from_docs(docs, query: str, llm=None, system_prompt: str = DEFAULT_SYSTEM_PROMPT) -> str:
+def generate_answer_from_docs(docs, query: str, llm=None, system_prompt: str = DEFAULT_SYSTEM_PROMPT, rerank: bool = False, top_n: int = 3) -> str:
     """
     Generate answer directly from a pre-routed/merged list of retrieved Document objects.
-    Useful when query routing / decomposition retrieves context across multiple sub-queries.
+    Optionally reranks docs using CrossEncoder if rerank=True.
     """
+    if rerank and docs:
+        from backend.reranker import rerank_documents
+        docs = rerank_documents(docs, query, top_n=top_n)
+
     if llm is None:
         llm = get_llm()
 
