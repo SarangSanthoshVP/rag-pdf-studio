@@ -126,7 +126,7 @@ export default function RAGDashboard() {
     } catch (err) {
       setUploadStatus({
         type: "error",
-        message: "Failed to connect to backend at http://localhost:8000. Is it running?",
+        message: "Failed to connect to backend. Is it running?",
       });
     } finally {
       setUploading(false);
@@ -180,7 +180,7 @@ export default function RAGDashboard() {
         ...newMessages,
         {
           sender: "assistant",
-          text: "Connection failed. Please verify that the FastAPI backend is running at http://localhost:8000.",
+          text: "Connection failed. Please verify that the FastAPI backend is running.",
         },
       ]);
     } finally {
