@@ -51,13 +51,16 @@ rag-pdf-studio/
 ├── README.md                  # Project documentation & architecture
 ├── requirements.txt           # Lightweight production backend dependencies
 ├── backend/
-│   ├── main.py                # FastAPI routes (/upload, /ask, /status, /reset_session) + CORS
+│   ├── main.py                # FastAPI routes (/upload, /ask, /status, /reset_session, /evaluate, /stt, /tts)
 │   ├── loading_chunking.py    # PyPDFLoader + RecursiveCharacterTextSplitter
 │   ├── embedding_faiss.py     # GoogleGenerativeAIEmbeddings + Resilient backoff + FAISS
 │   ├── reranker.py            # CrossEncoderReranker with safe cloud fallback
 │   ├── query_router.py        # Query classification & sub-query decomposition
 │   ├── rag_chain.py           # LCEL chain (Prompt + Gemini 3.5 Flash + Parser)
 │   ├── stt_tts.py             # Speech-to-Text (Gemini STT) & Text-to-Speech (gTTS)
+│   ├── eval.py                # Offline Ragas benchmark suite (evaluates all 5 metrics)
+│   ├── eval_compat.py         # Ragas compatibility bridge (LangChain 0.3+ & Python 3.14)
+│   ├── eval_results.csv       # Exported Ragas benchmark results scorecard
 │   └── data/
 │       ├── uploads/           # PDF storage directory (partitioned by session_id)
 │       └── faiss_index/       # Serialized FAISS indices (isolated per session_id)
