@@ -7,6 +7,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 export default function RAGDashboard() {
   // State
   const [backendOnline, setBackendOnline] = useState(false);
+  const [sessionId, setSessionId] = useState("");
   const [selectedFile, setSelectedFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -21,15 +22,36 @@ export default function RAGDashboard() {
   const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
 
-  // Check backend health and status
-  const checkBackendStatus = async () => {
+  // Helper to retrieve or initialize persistent session ID
+  const getOrCreateSessionId = () => {
+    if (typeof window === "undefined") return "";
+    let sid = localStorage.getItem("rag_session_id");
+    if (!sid) {
+      sid = (typeof crypto !== "undefined" && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `user_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      localStorage.setItem("rag_session_id", sid);
+    }
+    return sid;
+  };
+
+  // Check backend health and status isolated to current user's session
+  const checkBackendStatus = async (currentSid) => {
+    const sid = currentSid || sessionId || (typeof window !== "undefined" ? localStorage.getItem("rag_session_id") : "");
     try {
-      const res = await fetch(`${API_BASE_URL}/status`, { signal: AbortSignal.timeout(3000) });
+      const url = sid ? `${API_BASE_URL}/status?session_id=${encodeURIComponent(sid)}` : `${API_BASE_URL}/status`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
       if (res.ok) {
         const data = await res.json();
         setBackendOnline(true);
         if (data.has_document && data.active_document) {
-          setActiveDoc((prev) => prev || { filename: data.active_document });
+          setActiveDoc({
+            filename: data.active_document,
+            pages: data.total_pages,
+            chunks: data.total_chunks,
+          });
+        } else {
+          setActiveDoc(null);
         }
       } else {
         setBackendOnline(false);
@@ -39,15 +61,40 @@ export default function RAGDashboard() {
     }
   };
 
+  // Initialize session on mount
   useEffect(() => {
-    checkBackendStatus();
-    const interval = setInterval(checkBackendStatus, 8000);
+    const sid = getOrCreateSessionId();
+    setSessionId(sid);
+    checkBackendStatus(sid);
+    const interval = setInterval(() => checkBackendStatus(sid), 8000);
     return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, asking]);
+
+  // Reset active session and start fresh
+  const handleResetSession = async () => {
+    const sid = sessionId || (typeof window !== "undefined" ? localStorage.getItem("rag_session_id") : "");
+    try {
+      if (sid) {
+        await fetch(`${API_BASE_URL}/reset_session?session_id=${encodeURIComponent(sid)}`, { method: "POST" });
+      }
+    } catch {}
+
+    const newSid = (typeof crypto !== "undefined" && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `user_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    if (typeof window !== "undefined") {
+      localStorage.setItem("rag_session_id", newSid);
+    }
+    setSessionId(newSid);
+    setActiveDoc(null);
+    setSelectedFile(null);
+    setUploadStatus(null);
+    setMessages([]);
+  };
 
   // Drag & drop handlers
   const handleDragOver = (e) => {
@@ -81,15 +128,19 @@ export default function RAGDashboard() {
     }
   };
 
-  // Upload handler
+  // Upload handler with session isolation
   const handleUpload = async () => {
     if (!selectedFile) return;
 
     setUploading(true);
     setUploadStatus({ type: "loading", message: `Processing and indexing "${selectedFile.name}"...` });
 
+    const sid = sessionId || (typeof window !== "undefined" ? localStorage.getItem("rag_session_id") : "");
     const formData = new FormData();
     formData.append("file", selectedFile);
+    if (sid) {
+      formData.append("session_id", sid);
+    }
 
     try {
       const res = await fetch(`${API_BASE_URL}/upload`, {
@@ -133,7 +184,7 @@ export default function RAGDashboard() {
     }
   };
 
-  // Ask Question handler
+  // Ask Question handler with session isolation
   const handleAsk = async (e) => {
     if (e) e.preventDefault();
     const currentQuery = query.trim();
@@ -145,11 +196,13 @@ export default function RAGDashboard() {
     setQuery("");
     setAsking(true);
 
+    const sid = sessionId || (typeof window !== "undefined" ? localStorage.getItem("rag_session_id") : "");
+
     try {
       const res = await fetch(`${API_BASE_URL}/ask`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: currentQuery }),
+        body: JSON.stringify({ query: currentQuery, session_id: sid }),
       });
 
       const data = await res.json();
@@ -342,6 +395,26 @@ export default function RAGDashboard() {
               <h2 className="card-title">
                 <span>📖</span> ACTIVE KNOWLEDGE BASE
               </h2>
+              {activeDoc && (
+                <button
+                  id="reset-session-btn"
+                  onClick={handleResetSession}
+                  style={{
+                    background: "rgba(244, 63, 94, 0.1)",
+                    border: "1px solid rgba(244, 63, 94, 0.3)",
+                    color: "#fb7185",
+                    padding: "4px 10px",
+                    borderRadius: "6px",
+                    fontSize: "11px",
+                    fontWeight: "500",
+                    cursor: "pointer",
+                    transition: "all 0.2s ease",
+                  }}
+                  title="Clear active document and start fresh"
+                >
+                  ✕ Clear / New PDF
+                </button>
+              )}
             </div>
 
             {activeDoc ? (

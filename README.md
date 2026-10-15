@@ -1,6 +1,6 @@
 # ⚡ RAG Studio — Full-Stack PDF Knowledge Intelligence System
 
-A production-ready Retrieval-Augmented Generation (RAG) platform that enables users to upload PDF documents, vectorize their content using FAISS and Google Gemini cloud embeddings, and perform question-answering with verifiable citations.
+A production-ready Retrieval-Augmented Generation (RAG) platform with **multi-user session isolation**, enabling users to upload PDF documents, vectorize their content using FAISS and Google Gemini cloud embeddings with exponential backoff, and perform grounded question-answering with verifiable citations.
 
 🌐 **Live Demo (Frontend):** [https://rag-pdf-studio.vercel.app](https://rag-pdf-studio.vercel.app)  
 🚀 **Live API & Swagger Docs (Backend):** [https://rag-pdf-studio.onrender.com/docs](https://rag-pdf-studio.onrender.com/docs)
@@ -10,34 +10,57 @@ A production-ready Retrieval-Augmented Generation (RAG) platform that enables us
 ## 📌 Architecture Overview
 
 ```
-[User Browser]
-       │
-       ▼ (HTTPS)
-┌────────────────────────────────────────┐
-│      Next.js 16 Frontend (Vercel)       │
-│  • Drag & Drop PDF upload              │
-│  • Real-time indexing stats            │
-│  • Interactive Q&A chat interface      │
-│  • Source citation drawer with pages   │
-└───────────────────┬────────────────────┘
-                    │
-         REST API   │ POST /upload
-       Calls (JSON) │ POST /ask
-                    ▼
-┌────────────────────────────────────────┐
-│       FastAPI Backend (Render)         │
-│  • CORS-enabled Python ASGI server     │
-│  • In-memory session state             │
-└─────────┬──────────────────┬───────────┘
-          │                  │
-   PDF Chunks & Vectorize    │ Retrieval & Generation
-          ▼                  ▼
-┌──────────────────┐  ┌──────────────────────────────────┐
-│  FAISS Index     │  │ Google Gemini Cloud API          │
-│  (Vector Store)  │  │ • Embeddings: gemini-embedding-001│
-│  Top-k Search    │  │ • Generation: gemini-3.8-flash   │
-└──────────────────┘  └──────────────────────────────────┘
+[User Browser (Alice)]            [User Browser (Bob)]
+  • Session ID: abc-123             • Session ID: xyz-789
+  • Clean fresh state               • Clean fresh state
+           │                                 │
+           ▼ (HTTPS + Session ID)            ▼ (HTTPS + Session ID)
+┌────────────────────────────────────────────────────────┐
+│              Next.js 16 Frontend (Vercel)              │
+│  • Persistent browser session ID (localStorage)        │
+│  • Drag & Drop PDF upload & real-time indexing stats   │
+│  • Interactive Q&A chat interface                      │
+│  • Source citation drawer with page references         │
+│  • "Clear / New PDF" session reset                     │
+└───────────────────────────┬────────────────────────────┘
+                            │
+                 REST API   │ POST /upload (file, session_id)
+               Calls (JSON) │ POST /ask (query, session_id)
+                            │ GET  /status?session_id=...
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│                FastAPI Backend (Render)                │
+│  • Multi-user session router                           │
+│  • Isolated in-memory cache per session_id             │
+└─────────────┬────────────────────────────┬─────────────┘
+              │                            │
+   Per-Session Vector Store                │ Retrieval & Generation
+              ▼                            ▼
+┌──────────────────────────────┐  ┌──────────────────────────────────┐
+│  FAISS Isolated Indices      │  │ Google Gemini Cloud API          │
+│  • /data/faiss_index/abc-123 │  │ • Embeddings: gemini-embedding-001│
+│  • /data/faiss_index/xyz-789 │  │   (with exponential backoff)     │
+│  • Zero cross-user leakage   │  │ • Generation: gemini-3.5-flash   │
+└──────────────────────────────┘  └──────────────────────────────────┘
 ```
+
+---
+
+## 🔒 Multi-User Session Isolation & Privacy
+
+In standard RAG demos, a single global vector store causes **data leakage** (where user B sees user A's uploaded PDF) and **race condition conflicts**. RAG Studio implements **Session Isolation**:
+
+1. **Client-Side UUID (`localStorage`):**
+   - When a user opens the site for the first time, a unique `session_id` is created in `localStorage`.
+   - **Fresh Demo Experience:** New visitors always see an empty, welcoming interface with no previous user's documents.
+   - **Tab & Refresh Persistence:** If a user refreshes the page or switches tabs, their `session_id` is retained, automatically restoring their active document and statistics.
+
+2. **Per-Session Vector Store & Metadata:**
+   - The backend stores FAISS vector indices and documents inside isolated directories: `backend/data/faiss_index/{session_id}/`.
+   - Every `/status`, `/upload`, and `/ask` request is strictly scoped to the requesting `session_id`. One user can **never** view, query, or overwrite another user's document.
+
+3. **Session Reset (`POST /reset_session`):**
+   - Users can click **"✕ Clear / New PDF"** at any time to clear their index and start a fresh session with a new document.
 
 ---
 
@@ -47,35 +70,39 @@ The backend is built around a modular architecture split into distinct, single-r
 
 ### 1. Document Loading (`backend/loading_chunking.py`)
 - Uses `PyPDFLoader` to extract raw text and page-level metadata from uploaded PDF files.
-- Each page retains its zero-indexed page number for grounding and citation.
+- Retains page numbers for grounding and citation in answers.
 
 ### 2. Recursive Text Chunking (`backend/loading_chunking.py`)
 - Uses `RecursiveCharacterTextSplitter` with:
-  - `chunk_size = 600` characters
-  - `chunk_overlap = 200` characters
+  - `chunk_size = 1000` characters
+  - `chunk_overlap = 150` characters
   - `separators = ["\n\n", "\n", ", ", " ", ""]`
-- Maintains semantic coherence across paragraph boundaries while preventing context fragmentation.
+- Reduces chunk fragmentation and preserves cohesive context while drastically cutting down quota usage.
 
-### 3. Cloud Embeddings (`backend/embedding_faiss.py`)
+### 3. Cloud Embeddings & Exponential Backoff (`backend/embedding_faiss.py`)
 - Uses `GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")`.
-- **Zero Local RAM Overhead:** Unlike local PyTorch models (`sentence-transformers`), embeddings are computed via Google's cloud API, generating 3,072-dimensional vector representations.
-- **Why this was chosen:** Solved Render's 512 MB RAM limit (OOM crash) by eliminating 1.5 GB of PyTorch/Transformers dependencies.
+- **Zero Local RAM Overhead:** Embeddings are computed via Google's cloud API, generating 3,072-dimensional vector representations.
+- **Resilient Batching & Exponential Backoff:** Chunks are sent in batches of 25. If Google's free-tier rate limit (`429 RESOURCE_EXHAUSTED`) is reached, the system automatically parses Google's recommended cooldown window (or computes jittered exponential backoff) and retries up to 6 times without failing.
 
 ### 4. Vector Storage & Retrieval (`backend/embedding_faiss.py`)
-- Vectorizes chunks and builds an in-memory & on-disk `FAISS` index (`faiss-cpu`).
-- Returns a similarity retriever configured with `search_kwargs={"k": 5}` to retrieve relevant context chunks.
+- Builds per-session `FAISS` indices (`faiss-cpu`) stored on disk and cached in memory.
+- Returns similarity retrievers configured with `search_kwargs={"k": 5}`.
 
-### 5. Query Routing & Decomposition (`backend/query_router.py`)
-- **Lightweight Classifier:** Automatically classifies incoming questions into:
+### 5. Cross-Encoder Reranking (`backend/reranker.py`)
+- Employs `cross-encoder/ms-marco-MiniLM-L-6-v2` via `ContextualCompressionRetriever` to re-score and rank the top 3 most relevant context chunks.
+- **Cloud Safe Fallback:** If `sentence-transformers` is unavailable (e.g. to stay strictly under Render's 512 MB Free Tier RAM ceiling), the reranker automatically and gracefully falls back to the standard FAISS retriever without throwing errors.
+
+### 6. Query Routing & Decomposition (`backend/query_router.py`)
+- **Classifier:** Automatically classifies incoming questions into:
   - `single_fact`: Direct factual questions looking for specific points or definitions.
   - `multi_part`: Questions comparing entities or asking multi-faceted questions (e.g., *"What is X and how does it compare to Y?"*).
   - `summarization`: Requests for general document synthesis or high-level overviews.
 - **Sub-Query Decomposition & Evidence Tracking:**
   - Decomposes `multi_part` questions into 2–4 targeted sub-queries.
   - Retrieves dedicated context chunks for each sub-query separately.
-  - Returns clear evidence showing which documents were retrieved for which part before merging and deduplicating context.
+  - Returns clear evidence showing which documents were retrieved for which part before merging context.
 
-### 6. LCEL Generation Chain (`backend/rag_chain.py`)
+### 7. LCEL Generation Chain (`backend/rag_chain.py`)
 - Built using **LangChain Expression Language (LCEL)**:
   ```python
   chain = (
@@ -202,14 +229,15 @@ rag-pdf-studio/
 ├── README.md                  # Project documentation & architecture
 ├── requirements.txt           # Lightweight production backend dependencies
 ├── backend/
-│   ├── main.py                # FastAPI routes (/upload, /ask, /status) + CORS
+│   ├── main.py                # FastAPI routes (/upload, /ask, /status, /reset_session) + CORS
 │   ├── loading_chunking.py    # PyPDFLoader + RecursiveCharacterTextSplitter
-│   ├── embedding_faiss.py     # GoogleGenerativeAIEmbeddings + FAISS vectorstore
+│   ├── embedding_faiss.py     # GoogleGenerativeAIEmbeddings + Resilient backoff + FAISS
+│   ├── reranker.py            # CrossEncoderReranker with safe cloud fallback
 │   ├── query_router.py        # Query classification & sub-query decomposition
 │   ├── rag_chain.py           # LCEL chain (Prompt + Gemini 3.5 Flash + Parser)
 │   └── data/
-│       ├── uploads/           # PDF storage directory
-│       └── faiss_index/       # Serialized FAISS index
+│       ├── uploads/           # PDF storage directory (partitioned by session_id)
+│       └── faiss_index/       # Serialized FAISS indices (isolated per session_id)
 └── frontend/
     ├── package.json           # Next.js 16, React 19 dependencies
     └── app/
