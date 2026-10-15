@@ -19,8 +19,17 @@ export default function RAGDashboard() {
   const [asking, setAsking] = useState(false);
   const [expandedSources, setExpandedSources] = useState({});
 
+  // Speech to Text (STT) and Text to Speech (TTS) State
+  const [isRecording, setIsRecording] = useState(false);
+  const [playingMsgIdx, setPlayingMsgIdx] = useState(null);
+  const [ttsLoadingIdx, setTtsLoadingIdx] = useState(null);
+
   const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
+  const recognitionRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const audioPlayerRef = useRef(null);
 
   // Helper to retrieve or initialize persistent session ID
   const getOrCreateSessionId = () => {
@@ -83,6 +92,7 @@ export default function RAGDashboard() {
       }
     } catch {}
 
+    stopAudio();
     const newSid = (typeof crypto !== "undefined" && crypto.randomUUID)
       ? crypto.randomUUID()
       : `user_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
@@ -94,6 +104,182 @@ export default function RAGDashboard() {
     setSelectedFile(null);
     setUploadStatus(null);
     setMessages([]);
+  };
+
+  // Stop active TTS audio
+  const stopAudio = () => {
+    if (audioPlayerRef.current) {
+      audioPlayerRef.current.pause();
+      audioPlayerRef.current.currentTime = 0;
+      audioPlayerRef.current = null;
+    }
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+    setPlayingMsgIdx(null);
+    setTtsLoadingIdx(null);
+  };
+
+  // Toggle Read Aloud (TTS) for specific assistant message
+  const handleToggleTTS = async (text, idx) => {
+    if (playingMsgIdx === idx) {
+      stopAudio();
+      return;
+    }
+
+    stopAudio();
+    setTtsLoadingIdx(idx);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/tts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+
+      if (res.ok) {
+        const blob = await res.blob();
+        const audioUrl = URL.createObjectURL(blob);
+        const audio = new Audio(audioUrl);
+        audioPlayerRef.current = audio;
+
+        audio.onended = () => {
+          setPlayingMsgIdx(null);
+          audioPlayerRef.current = null;
+        };
+
+        audio.onerror = () => {
+          fallbackBrowserTTS(text, idx);
+        };
+
+        await audio.play();
+        setTtsLoadingIdx(null);
+        setPlayingMsgIdx(idx);
+      } else {
+        fallbackBrowserTTS(text, idx);
+      }
+    } catch {
+      fallbackBrowserTTS(text, idx);
+    }
+  };
+
+  const fallbackBrowserTTS = (text, idx) => {
+    setTtsLoadingIdx(null);
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.onend = () => setPlayingMsgIdx(null);
+      utterance.onerror = () => setPlayingMsgIdx(null);
+      setPlayingMsgIdx(idx);
+      window.speechSynthesis.speak(utterance);
+    } else {
+      setPlayingMsgIdx(null);
+    }
+  };
+
+  // STT: Speech to Text Recording
+  const handleToggleSpeechRecording = () => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  };
+
+  const startRecording = async () => {
+    // 1. Try browser SpeechRecognition if available (live streaming transcription)
+    const SpeechRecognition = typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition);
+    if (SpeechRecognition) {
+      try {
+        const recognition = new SpeechRecognition();
+        recognition.lang = "en-US";
+        recognition.continuous = false;
+        recognition.interimResults = true;
+
+        recognition.onstart = () => {
+          setIsRecording(true);
+        };
+
+        recognition.onresult = (event) => {
+          let transcript = "";
+          for (let i = event.resultIndex; i < event.results.length; ++i) {
+            transcript += event.results[i][0].transcript;
+          }
+          if (transcript) {
+            setQuery(transcript);
+          }
+        };
+
+        recognition.onerror = () => {
+          setIsRecording(false);
+        };
+
+        recognition.onend = () => {
+          setIsRecording(false);
+        };
+
+        recognitionRef.current = recognition;
+        recognition.start();
+        return;
+      } catch (err) {
+        console.warn("SpeechRecognition fallback to MediaRecorder", err);
+      }
+    }
+
+    // 2. Fallback to MediaRecorder + backend /stt endpoint
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        setIsRecording(false);
+        stream.getTracks().forEach((track) => track.stop());
+
+        if (audioChunksRef.current.length === 0) return;
+        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        const formData = new FormData();
+        formData.append("file", audioBlob, "speech_query.webm");
+
+        try {
+          const res = await fetch(`${API_BASE_URL}/stt`, {
+            method: "POST",
+            body: formData,
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.text) {
+              setQuery(data.text);
+            }
+          }
+        } catch (e) {
+          console.error("STT error:", e);
+        }
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+    } catch {
+      alert("Microphone access was denied or not supported in this browser.");
+      setIsRecording(false);
+    }
+  };
+
+  const stopRecording = () => {
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch {}
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+      try { mediaRecorderRef.current.stop(); } catch {}
+    }
+    setIsRecording(false);
   };
 
   // Drag & drop handlers
@@ -584,6 +770,33 @@ export default function RAGDashboard() {
 
                       <div className="message-ai-content">{msg.text}</div>
 
+                      {/* TTS Audio Readout Button */}
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "10px", marginBottom: "8px" }}>
+                        <button
+                          type="button"
+                          className={`tts-btn ${playingMsgIdx === idx ? "active" : ""}`}
+                          onClick={() => handleToggleTTS(msg.text, idx)}
+                          title={playingMsgIdx === idx ? "Stop reading response" : "Read aloud generated response"}
+                        >
+                          {ttsLoadingIdx === idx ? (
+                            <>
+                              <span className="spinner" style={{ width: "10px", height: "10px" }}></span>
+                              <span>Generating speech...</span>
+                            </>
+                          ) : playingMsgIdx === idx ? (
+                            <>
+                              <span style={{ color: "#f43f5e" }}>⏹</span>
+                              <span>Stop Audio</span>
+                            </>
+                          ) : (
+                            <>
+                              <span>🔊</span>
+                              <span>Read Aloud</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+
                       {/* Source Citations */}
                       {msg.sources && msg.sources.length > 0 && (
                         <div>
@@ -628,15 +841,27 @@ export default function RAGDashboard() {
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Input Bar */}
+          {/* Input Bar with STT & Text Input */}
           <form className="chat-input-bar" onSubmit={handleAsk}>
+            <button
+              id="mic-btn"
+              type="button"
+              onClick={handleToggleSpeechRecording}
+              disabled={!activeDoc || asking}
+              className={`btn-mic ${isRecording ? "recording" : ""}`}
+              title={isRecording ? "Listening... Click to stop" : "Speak query (Speech-to-Text)"}
+            >
+              {isRecording ? "🔴 Stop" : "🎙️"}
+            </button>
             <input
               id="query-input"
               type="text"
               placeholder={
-                activeDoc
-                  ? "Ask a question about the document..."
-                  : "Please upload a PDF first to ask questions..."
+                isRecording
+                  ? "Listening to your voice..."
+                  : activeDoc
+                    ? "Ask a question about the document or click the mic to speak..."
+                    : "Please upload a PDF first to ask questions..."
               }
               value={query}
               onChange={(e) => setQuery(e.target.value)}

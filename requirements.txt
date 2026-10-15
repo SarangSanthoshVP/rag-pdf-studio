@@ -10,3 +10,5 @@ python-dotenv
 fastapi
 uvicorn
 python-multipart
+gTTS
+google-genai

@@ -7,6 +7,70 @@ A production-ready Retrieval-Augmented Generation (RAG) platform with **multi-us
 
 ---
 
+## 💻 Local Development Setup
+
+### 1. Clone & Set Environment
+```powershell
+git clone https://github.com/SarangSanthoshVP/rag-pdf-studio.git
+cd rag-pdf-studio
+
+# Create .env file with your API key
+echo "GEMINI_API_KEY=your_key_here" > .env
+```
+
+### 2. Backend Setup
+```powershell
+# Create and activate virtual environment
+python -m venv .venvp
+.\.venvp\Scripts\Activate.ps1
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run FastAPI server on port 8000
+uvicorn backend.main:app --reload --port 8000
+```
+Swagger UI: `http://localhost:8000/docs`
+
+### 3. Frontend Setup
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+Next.js App: `http://localhost:3000`
+
+---
+
+## 📁 Repository Structure
+
+```text
+rag-pdf-studio/
+├── .env                       # Local secrets (ignored by Git)
+├── .gitignore                 # Excludes venv, node_modules, temp data
+├── README.md                  # Project documentation & architecture
+├── requirements.txt           # Lightweight production backend dependencies
+├── backend/
+│   ├── main.py                # FastAPI routes (/upload, /ask, /status, /reset_session) + CORS
+│   ├── loading_chunking.py    # PyPDFLoader + RecursiveCharacterTextSplitter
+│   ├── embedding_faiss.py     # GoogleGenerativeAIEmbeddings + Resilient backoff + FAISS
+│   ├── reranker.py            # CrossEncoderReranker with safe cloud fallback
+│   ├── query_router.py        # Query classification & sub-query decomposition
+│   ├── rag_chain.py           # LCEL chain (Prompt + Gemini 3.5 Flash + Parser)
+│   ├── stt_tts.py             # Speech-to-Text (Gemini STT) & Text-to-Speech (gTTS)
+│   └── data/
+│       ├── uploads/           # PDF storage directory (partitioned by session_id)
+│       └── faiss_index/       # Serialized FAISS indices (isolated per session_id)
+└── frontend/
+    ├── package.json           # Next.js 16, React 19 dependencies
+    └── app/
+        ├── layout.js          # Google Fonts & global HTML wrapper
+        ├── globals.css        # Vanilla CSS design system (Dark mode & animations)
+        └── page.js            # Interactive RAG Dashboard UI & chat
+```
+
+---
+
 ## 📌 Architecture Overview
 
 ```
@@ -84,13 +148,21 @@ The backend is built around a modular architecture split into distinct, single-r
 - **Zero Local RAM Overhead:** Embeddings are computed via Google's cloud API, generating 3,072-dimensional vector representations.
 - **Resilient Batching & Exponential Backoff:** Chunks are sent in batches of 25. If Google's free-tier rate limit (`429 RESOURCE_EXHAUSTED`) is reached, the system automatically parses Google's recommended cooldown window (or computes jittered exponential backoff) and retries up to 6 times without failing.
 
+> [!NOTE]  
+> **Why Gemini Cloud Embeddings instead of Sentence-Transformers?**  
+> The production backend on Render runs on the **Free Tier with a strict 512 MB RAM limit**. Loading local PyTorch / HuggingFace `sentence-transformers` models requires ~1.5 GB of RAM, which triggers immediate Out-Of-Memory (OOM) crashes. Using Google Gemini cloud embeddings offloads all vector computation to Google's cloud API with **0 MB local RAM usage**, enabling the backend to run reliably without exceeding memory quotas.
+
 ### 4. Vector Storage & Retrieval (`backend/embedding_faiss.py`)
 - Builds per-session `FAISS` indices (`faiss-cpu`) stored on disk and cached in memory.
 - Returns similarity retrievers configured with `search_kwargs={"k": 5}`.
 
 ### 5. Cross-Encoder Reranking (`backend/reranker.py`)
 - Employs `cross-encoder/ms-marco-MiniLM-L-6-v2` via `ContextualCompressionRetriever` to re-score and rank the top 3 most relevant context chunks.
-- **Cloud Safe Fallback:** If `sentence-transformers` is unavailable (e.g. to stay strictly under Render's 512 MB Free Tier RAM ceiling), the reranker automatically and gracefully falls back to the standard FAISS retriever without throwing errors.
+
+> [!IMPORTANT]  
+> **Localhost vs. Production Reranking:**  
+> - **On Localhost:** The Cross-Encoder reranker (`cross-encoder/ms-marco-MiniLM-L-6-v2`) runs locally using `sentence-transformers` and PyTorch to re-score and rank the top 3 context chunks.  
+> - **In Production (Render):** Because of the 512 MB RAM limit mentioned above, `sentence-transformers` is omitted in cloud deployment. The system includes an intelligent graceful fallback that automatically uses the high-performance **Gemini Bi-Encoder + FAISS retriever**, ensuring complete stability and preventing OOM crashes in production.
 
 ### 6. Query Routing & Decomposition (`backend/query_router.py`)
 - **Classifier:** Automatically classifies incoming questions into:
@@ -117,6 +189,17 @@ The backend is built around a modular architecture split into distinct, single-r
   ```
 - **Prompt:** Enforces strict grounding — answers only from retrieved context, otherwise politely informs the user that information is outside the document.
 - **LLM:** `ChatGoogleGenerativeAI(model="gemini-3.5-flash-lite", temperature=0.0)`.
+
+### 8. Voice Intelligence: Speech-to-Text & Text-to-Speech (`backend/stt_tts.py`)
+- **Speech-to-Text (STT) — 2-Layer Hybrid Architecture:**
+  - Users can click the microphone button (`🎙️`) in the chat input bar to speak their query verbally instead of typing.
+  - **Layer 1 (Primary — Instant & 0 Tokens):** Uses the browser's native Web Speech API (`SpeechRecognition`) supported in Chrome, Edge, Safari, and Android. It provides real-time streaming dictation directly in the browser with zero latency and **0 Gemini tokens consumed**.
+  - **Layer 2 (Fallback — Cloud Multimodal AI):** In browsers without native speech recognition (such as Firefox or custom in-app WebViews), the frontend captures the audio via `MediaRecorder` and sends it to the backend `POST /stt` endpoint. The backend invokes Gemini (`gemini-3.5-flash-lite`) to transcribe the audio into text (~32 audio tokens/sec) with zero local RAM footprint.
+- **Text-to-Speech (TTS):**
+  - Every assistant response card includes an on-demand **"🔊 Read Aloud"** button.
+  - The response text is cleaned of markdown formatting (code blocks, headers, bullet points) and streamed as spoken MP3 audio via `POST /tts` using `gTTS` (Google Text-to-Speech).
+  - **Consumes 0 LLM tokens** because it uses an audio synthesizer rather than a generative model.
+  - Audio playback starts **only when explicitly clicked** by the user and can be paused or stopped at any time (`⏹ Stop Audio`).
 
 ---
 
@@ -185,68 +268,7 @@ git push origin main
 
 ---
 
-## 💻 Local Development Setup
 
-### 1. Clone & Set Environment
-```powershell
-git clone https://github.com/SarangSanthoshVP/rag-pdf-studio.git
-cd rag-pdf-studio
-
-# Create .env file with your API key
-echo "GEMINI_API_KEY=your_key_here" > .env
-```
-
-### 2. Backend Setup
-```powershell
-# Create and activate virtual environment
-python -m venv .venvp
-.\.venvp\Scripts\Activate.ps1
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Run FastAPI server on port 8000
-uvicorn backend.main:app --reload --port 8000
-```
-Swagger UI: `http://localhost:8000/docs`
-
-### 3. Frontend Setup
-```powershell
-cd frontend
-npm install
-npm run dev
-```
-Next.js App: `http://localhost:3000`
-
----
-
-## 📁 Repository Structure
-
-```text
-rag-pdf-studio/
-├── .env                       # Local secrets (ignored by Git)
-├── .gitignore                 # Excludes venv, node_modules, temp data
-├── README.md                  # Project documentation & architecture
-├── requirements.txt           # Lightweight production backend dependencies
-├── backend/
-│   ├── main.py                # FastAPI routes (/upload, /ask, /status, /reset_session) + CORS
-│   ├── loading_chunking.py    # PyPDFLoader + RecursiveCharacterTextSplitter
-│   ├── embedding_faiss.py     # GoogleGenerativeAIEmbeddings + Resilient backoff + FAISS
-│   ├── reranker.py            # CrossEncoderReranker with safe cloud fallback
-│   ├── query_router.py        # Query classification & sub-query decomposition
-│   ├── rag_chain.py           # LCEL chain (Prompt + Gemini 3.5 Flash + Parser)
-│   └── data/
-│       ├── uploads/           # PDF storage directory (partitioned by session_id)
-│       └── faiss_index/       # Serialized FAISS indices (isolated per session_id)
-└── frontend/
-    ├── package.json           # Next.js 16, React 19 dependencies
-    └── app/
-        ├── layout.js          # Google Fonts & global HTML wrapper
-        ├── globals.css        # Vanilla CSS design system (Dark mode & animations)
-        └── page.js            # Interactive RAG Dashboard UI & chat
-```
-
----
 
 ## 🛡️ License
 MIT License. Free for educational and commercial use.

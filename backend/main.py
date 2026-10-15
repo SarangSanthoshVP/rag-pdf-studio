@@ -5,6 +5,7 @@ from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -13,6 +14,7 @@ from backend.embedding_faiss import create_vectorstore, load_vectorstore, get_re
 from backend.reranker import get_cross_encoder_retriever
 from backend.rag_chain import create_rag_chain, generate_answer_from_docs
 from backend.query_router import route_and_retrieve
+from backend.stt_tts import transcribe_audio, text_to_speech
 
 # Base paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -329,6 +331,41 @@ def reset_session(session_id: Optional[str] = None):
         "message": "Session reset successfully. You can now upload a new document.",
         "session_id": clean_id
     }
+
+
+class TTSRequest(BaseModel):
+    text: str
+    lang: Optional[str] = "en"
+
+
+@app.post("/stt")
+async def speech_to_text(file: UploadFile = File(...)):
+    """
+    Speech-to-Text: Converts user spoken voice audio into text query using Gemini multimodal STT.
+    """
+    try:
+        audio_bytes = await file.read()
+        mime_type = file.content_type or "audio/webm"
+        transcribed_text = transcribe_audio(audio_bytes, mime_type=mime_type)
+        return {"text": transcribed_text}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Speech transcription failed: {str(e)}")
+
+
+@app.post("/tts")
+def text_to_speech_endpoint(payload: TTSRequest):
+    """
+    Text-to-Speech: Converts generated AI response into spoken audio (MP3).
+    Only invoked when user clicks the Listen button below a response.
+    """
+    text = payload.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Text cannot be empty.")
+    try:
+        audio_bytes = text_to_speech(text, lang=payload.lang or "en")
+        return Response(content=audio_bytes, media_type="audio/mp3")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"TTS conversion failed: {str(e)}")
 
 
 if __name__ == "__main__":
