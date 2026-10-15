@@ -201,6 +201,28 @@ The backend is built around a modular architecture split into distinct, single-r
   - **Consumes 0 LLM tokens** because it uses an audio synthesizer rather than a generative model.
   - Audio playback starts **only when explicitly clicked** by the user and can be paused or stopped at any time (`⏹ Stop Audio`).
 
+### 9. RAG Evaluation with Ragas Metrics (`backend/eval.py` & Live UI)
+- **Ground Truth vs. Reference-Free Metrics:**
+  | Metric | Requires Ground Truth (`reference`)? | Evaluation Role |
+  | :--- | :---: | :--- |
+  | **Faithfulness** | ❌ **No** (Reference-Free) | Detects hallucinations: verifies every claim is supported strictly by retrieved chunks |
+  | **Answer Relevancy** | ❌ **No** (Reference-Free) | Measures how directly and concisely the answer addresses the user query |
+  | **Context Precision** | ✅ **Yes** (Requires Ground Truth) | Evaluates whether ground-truth relevant context chunks are ranked at the top |
+  | **Context Recall** | ✅ **Yes** (Requires Ground Truth) | Measures if all necessary ground-truth facts were retrieved in the context |
+  | **Answer Correctness** | ✅ **Yes** (Requires Ground Truth) | Evaluates semantic and factual accuracy against verified ground truth |
+
+- **Two-Tier Evaluation Architecture:**
+  - **Tier 1: Offline Golden Benchmark Script (`backend/eval.py`)**
+    - Run locally or in CI/CD: `python backend/eval.py`.
+    - Benchmarks the pipeline across all **5 metrics** against a curated `golden_dataset`.
+    - Automatically discovers active session FAISS indices or initializes demo benchmarks.
+    - Exports a detailed scorecard and summary averages to `backend/eval_results.csv`.
+  - **Tier 2: Live On-Demand UI Evaluation (`POST /evaluate`)**
+    - Users can click **"⭐ Evaluate Quality"** below any AI response card with retrieved citations.
+    - Evaluates **Faithfulness** and **Answer Relevancy** in real time via Gemini LLM-as-a-judge.
+    - Displays interactive score badges (e.g. `🛡️ Faithfulness: 100%`, `🎯 Relevancy: 91%`).
+    - Operates strictly **on-demand** to conserve Gemini free-tier rate limits and prevent unnecessary latency.
+
 ---
 
 ## 🚀 Cloud Deployment Guide (Step-by-Step)

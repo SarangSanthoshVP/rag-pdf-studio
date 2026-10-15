@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from backend.loading_chunking import load_and_chunk_pdf
 from backend.embedding_faiss import create_vectorstore, load_vectorstore, get_retriever, get_embedder
 from backend.reranker import get_cross_encoder_retriever
-from backend.rag_chain import create_rag_chain, generate_answer_from_docs
+from backend.rag_chain import create_rag_chain, generate_answer_from_docs, get_llm
 from backend.query_router import route_and_retrieve
 from backend.stt_tts import transcribe_audio, text_to_speech
 
@@ -366,6 +366,84 @@ def text_to_speech_endpoint(payload: TTSRequest):
         return Response(content=audio_bytes, media_type="audio/mp3")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"TTS conversion failed: {str(e)}")
+
+
+class EvaluateRequest(BaseModel):
+    query: str
+    response: str
+    retrieved_contexts: List[str]
+
+
+class EvaluateResponse(BaseModel):
+    status: str
+    faithfulness: Optional[float] = None
+    answer_relevancy: Optional[float] = None
+    detail: Optional[str] = None
+
+
+@app.post("/evaluate", response_model=EvaluateResponse)
+def evaluate_rag_response(payload: EvaluateRequest):
+    """
+    On-demand Reference-Free Ragas evaluation for live UI responses.
+    Evaluates:
+    1. Faithfulness (Checks for hallucination against retrieved chunks)
+    2. Answer Relevancy (Checks if response directly answers query)
+    Note: Context Recall & Answer Correctness require ground truth references
+    and are evaluated via the offline benchmark script (backend/eval.py).
+    """
+    if not payload.retrieved_contexts:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot evaluate without retrieved context chunks."
+        )
+
+    try:
+        import math
+        from backend.eval_compat import ensure_ragas_compatibility
+        ensure_ragas_compatibility()
+
+        from datasets import Dataset
+        from ragas import evaluate
+        from ragas.llms import LangchainLLMWrapper
+        from ragas.embeddings import LangchainEmbeddingsWrapper
+        from ragas.metrics import Faithfulness, AnswerRelevancy
+
+        judge_llm = get_llm(model="gemini-3.5-flash-lite", temperature=0.0)
+        embedder = get_embedder()
+
+        eval_data = {
+            "user_input": [payload.query],
+            "response": [payload.response],
+            "retrieved_contexts": [payload.retrieved_contexts]
+        }
+
+        dataset = Dataset.from_dict(eval_data)
+        eval_result = evaluate(
+            dataset=dataset,
+            metrics=[Faithfulness(), AnswerRelevancy()],
+            llm=LangchainLLMWrapper(judge_llm),
+            embeddings=LangchainEmbeddingsWrapper(embedder),
+            raise_exceptions=False
+        )
+
+        eval_df = eval_result.to_pandas()
+        faith_raw = eval_df["faithfulness"].iloc[0] if "faithfulness" in eval_df else None
+        rel_raw = eval_df["answer_relevancy"].iloc[0] if "answer_relevancy" in eval_df else None
+
+        faith_val = None if (faith_raw is None or math.isnan(faith_raw)) else round(float(faith_raw), 4)
+        rel_val = None if (rel_raw is None or math.isnan(rel_raw)) else round(float(rel_raw), 4)
+
+        return EvaluateResponse(
+            status="success",
+            faithfulness=faith_val,
+            answer_relevancy=rel_val
+        )
+    except Exception as e:
+        print(f"Error during Ragas live evaluation: {e}", flush=True)
+        return EvaluateResponse(
+            status="error",
+            detail=str(e)
+        )
 
 
 if __name__ == "__main__":

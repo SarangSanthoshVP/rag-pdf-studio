@@ -12,3 +12,6 @@ uvicorn
 python-multipart
 gTTS
 google-genai
+ragas==0.2.15
+datasets
+pandas

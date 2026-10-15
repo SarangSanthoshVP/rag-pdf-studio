@@ -24,6 +24,10 @@ export default function RAGDashboard() {
   const [playingMsgIdx, setPlayingMsgIdx] = useState(null);
   const [ttsLoadingIdx, setTtsLoadingIdx] = useState(null);
 
+  // Ragas On-Demand Live Evaluation State
+  const [evaluatingIdx, setEvaluatingIdx] = useState(null);
+  const [evalResults, setEvalResults] = useState({});
+
   const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
   const recognitionRef = useRef(null);
@@ -174,6 +178,54 @@ export default function RAGDashboard() {
       window.speechSynthesis.speak(utterance);
     } else {
       setPlayingMsgIdx(null);
+    }
+  };
+
+  // Ragas On-Demand Evaluation Handler
+  const handleEvaluateResponse = async (msg, idx) => {
+    if (evaluatingIdx !== null || !msg.sources || msg.sources.length === 0) return;
+    setEvaluatingIdx(idx);
+
+    const contexts = msg.sources.map((s) => s.content);
+    const userQuery =
+      msg.query ||
+      (idx > 0 && messages[idx - 1]?.sender === "user"
+        ? messages[idx - 1].text
+        : "Document inquiry");
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/evaluate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: userQuery,
+          response: msg.text,
+          retrieved_contexts: contexts,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.status === "success") {
+        setEvalResults((prev) => ({
+          ...prev,
+          [idx]: {
+            faithfulness: data.faithfulness,
+            answer_relevancy: data.answer_relevancy,
+          },
+        }));
+      } else {
+        setEvalResults((prev) => ({
+          ...prev,
+          [idx]: { error: data.detail || "Evaluation failed" },
+        }));
+      }
+    } catch {
+      setEvalResults((prev) => ({
+        ...prev,
+        [idx]: { error: "Failed to connect to evaluation endpoint." },
+      }));
+    } finally {
+      setEvaluatingIdx(null);
     }
   };
 
@@ -399,6 +451,7 @@ export default function RAGDashboard() {
           {
             sender: "assistant",
             text: data.answer,
+            query: currentQuery,
             query_type: data.query_type,
             sub_queries: data.sub_queries || [],
             sub_query_evidence: data.sub_query_evidence || {},
@@ -770,17 +823,34 @@ export default function RAGDashboard() {
 
                       <div className="message-ai-content">{msg.text}</div>
 
-                      {/* TTS Audio Readout Button */}
-                      <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "10px", marginBottom: "8px" }}>
+                      {/* Action Row: Read Aloud & Ragas Evaluation */}
+                      <div
+                        style={{
+                          display: "flex",
+                          flexWrap: "wrap",
+                          alignItems: "center",
+                          gap: "8px",
+                          marginTop: "10px",
+                          marginBottom: "8px",
+                        }}
+                      >
+                        {/* TTS Audio Readout Button */}
                         <button
                           type="button"
                           className={`tts-btn ${playingMsgIdx === idx ? "active" : ""}`}
                           onClick={() => handleToggleTTS(msg.text, idx)}
-                          title={playingMsgIdx === idx ? "Stop reading response" : "Read aloud generated response"}
+                          title={
+                            playingMsgIdx === idx
+                              ? "Stop reading response"
+                              : "Read aloud generated response"
+                          }
                         >
                           {ttsLoadingIdx === idx ? (
                             <>
-                              <span className="spinner" style={{ width: "10px", height: "10px" }}></span>
+                              <span
+                                className="spinner"
+                                style={{ width: "10px", height: "10px" }}
+                              ></span>
                               <span>Generating speech...</span>
                             </>
                           ) : playingMsgIdx === idx ? (
@@ -795,7 +865,159 @@ export default function RAGDashboard() {
                             </>
                           )}
                         </button>
+
+                        {/* Ragas Evaluation Button (Only on AI responses with retrieved sources) */}
+                        {msg.sources && msg.sources.length > 0 && (
+                          <button
+                            type="button"
+                            className="tts-btn"
+                            onClick={() => handleEvaluateResponse(msg, idx)}
+                            disabled={evaluatingIdx === idx}
+                            title="Evaluate answer against retrieved chunks with Ragas (Faithfulness & Answer Relevancy)"
+                            style={{
+                              background: evalResults[idx]
+                                ? "rgba(16, 185, 129, 0.12)"
+                                : "rgba(99, 102, 241, 0.12)",
+                              borderColor: evalResults[idx]
+                                ? "rgba(16, 185, 129, 0.35)"
+                                : "rgba(99, 102, 241, 0.35)",
+                              color: evalResults[idx] ? "#6ee7b7" : "#c7d2fe",
+                            }}
+                          >
+                            {evaluatingIdx === idx ? (
+                              <>
+                                <span
+                                  className="spinner"
+                                  style={{ width: "10px", height: "10px" }}
+                                ></span>
+                                <span>Evaluating Ragas...</span>
+                              </>
+                            ) : evalResults[idx] ? (
+                              <>
+                                <span>✓</span>
+                                <span>Scorecard Ready</span>
+                              </>
+                            ) : (
+                              <>
+                                <span>⭐</span>
+                                <span>Evaluate Quality</span>
+                              </>
+                            )}
+                          </button>
+                        )}
                       </div>
+
+                      {/* Ragas Quality Metrics Scorecard */}
+                      {evalResults[idx] && (
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            flexWrap: "wrap",
+                            gap: "8px",
+                            marginTop: "6px",
+                            marginBottom: "10px",
+                            padding: "8px 12px",
+                            background: "rgba(15, 23, 42, 0.65)",
+                            borderRadius: "8px",
+                            border: "1px solid rgba(255, 255, 255, 0.08)",
+                            fontSize: "12px",
+                          }}
+                        >
+                          <span
+                            style={{
+                              color: "#94a3b8",
+                              fontWeight: 600,
+                              fontSize: "11px",
+                              letterSpacing: "0.5px",
+                            }}
+                          >
+                            RAGAS SCORE:
+                          </span>
+
+                          {evalResults[idx].error ? (
+                            <span style={{ color: "#f87171" }}>
+                              ⚠ {evalResults[idx].error}
+                            </span>
+                          ) : (
+                            <>
+                              {/* Faithfulness Badge */}
+                              <span
+                                style={{
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: "5px",
+                                  padding: "3px 10px",
+                                  borderRadius: "999px",
+                                  fontWeight: 600,
+                                  background:
+                                    (evalResults[idx].faithfulness ?? 0) >= 0.8
+                                      ? "rgba(16, 185, 129, 0.15)"
+                                      : (evalResults[idx].faithfulness ?? 0) >= 0.5
+                                      ? "rgba(245, 158, 11, 0.15)"
+                                      : "rgba(239, 68, 68, 0.15)",
+                                  color:
+                                    (evalResults[idx].faithfulness ?? 0) >= 0.8
+                                      ? "#34d399"
+                                      : (evalResults[idx].faithfulness ?? 0) >= 0.5
+                                      ? "#fbbf24"
+                                      : "#f87171",
+                                  border: "1px solid rgba(255, 255, 255, 0.1)",
+                                }}
+                                title="Faithfulness: Measures if all claims are grounded in retrieved context (hallucination detector)"
+                              >
+                                🛡️ Faithfulness:{" "}
+                                {evalResults[idx].faithfulness !== null &&
+                                evalResults[idx].faithfulness !== undefined
+                                  ? `${Math.round(evalResults[idx].faithfulness * 100)}%`
+                                  : "N/A"}
+                              </span>
+
+                              {/* Answer Relevancy Badge */}
+                              <span
+                                style={{
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: "5px",
+                                  padding: "3px 10px",
+                                  borderRadius: "999px",
+                                  fontWeight: 600,
+                                  background:
+                                    (evalResults[idx].answer_relevancy ?? 0) >= 0.8
+                                      ? "rgba(6, 182, 212, 0.15)"
+                                      : (evalResults[idx].answer_relevancy ?? 0) >= 0.5
+                                      ? "rgba(245, 158, 11, 0.15)"
+                                      : "rgba(239, 68, 68, 0.15)",
+                                  color:
+                                    (evalResults[idx].answer_relevancy ?? 0) >= 0.8
+                                      ? "#22d3ee"
+                                      : (evalResults[idx].answer_relevancy ?? 0) >= 0.5
+                                      ? "#fbbf24"
+                                      : "#f87171",
+                                  border: "1px solid rgba(255, 255, 255, 0.1)",
+                                }}
+                                title="Answer Relevancy: Measures how directly the answer addresses the question"
+                              >
+                                🎯 Relevancy:{" "}
+                                {evalResults[idx].answer_relevancy !== null &&
+                                evalResults[idx].answer_relevancy !== undefined
+                                  ? `${Math.round(evalResults[idx].answer_relevancy * 100)}%`
+                                  : "N/A"}
+                              </span>
+
+                              <span
+                                style={{
+                                  fontSize: "11px",
+                                  color: "#64748b",
+                                  marginLeft: "auto",
+                                }}
+                              >
+                                Reference-free LLM Judge
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      )}
 
                       {/* Source Citations */}
                       {msg.sources && msg.sources.length > 0 && (
