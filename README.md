@@ -27,10 +27,17 @@ python -m venv .venvp
 # Install dependencies
 pip install -r requirements.txt
 
+# (Optional) Enable local Cross-Encoder reranking
+pip install sentence-transformers
+
 # Run FastAPI server on port 8000
 uvicorn backend.main:app --reload --port 8000
 ```
 Swagger UI: `http://localhost:8000/docs`
+
+> [!NOTE]  
+> **Why `sentence-transformers` is optional & omitted from `requirements.txt`:**  
+> To enable the local Cross-Encoder reranker on your machine, run `pip install sentence-transformers`. We deliberately excluded it from `requirements.txt` because in production (Render Free Tier) there is a strict **512 MB RAM limit**. Loading `sentence-transformers` and PyTorch requires ~1.5 GB of RAM and triggers an Out-Of-Memory (OOM) crash. On Render, the backend gracefully falls back to the base FAISS retriever with zero local memory overhead. For more details, refer to the [LangChain RAG Pipeline Breakdown](#5-cross-encoder-reranking-backendrerankerpy) section below.
 
 ### 3. Frontend Setup
 ```powershell
